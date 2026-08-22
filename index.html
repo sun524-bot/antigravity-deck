@@ -826,11 +826,25 @@
             const baseW = img.offsetWidth || img.clientWidth || (img.naturalWidth || 1920);
             const baseH = img.offsetHeight || img.clientHeight || (img.naturalHeight || 1200);
 
-            const imgX = unrotX + (baseW / 2);
-            const imgY = unrotY + (baseH / 2);
+            // Compute exact active rendering box (compensating for letterbox / pillarbox in contain mode)
+            let renderW = baseW;
+            let renderH = baseH;
+            if (img.style.objectFit !== 'fill' && baseW > 0 && baseH > 0 && SERVER_SCREEN_W > 0 && SERVER_SCREEN_H > 0) {
+                const naturalRatio = SERVER_SCREEN_W / SERVER_SCREEN_H;
+                const containerRatio = baseW / baseH;
+                if (containerRatio > naturalRatio) {
+                    // Pillarbox: black bars on left/right
+                    renderH = baseH;
+                    renderW = baseH * naturalRatio;
+                } else {
+                    // Letterbox: black bars on top/bottom
+                    renderW = baseW;
+                    renderH = baseW / naturalRatio;
+                }
+            }
 
-            const normX = imgX / baseW;
-            const normY = imgY / baseH;
+            const normX = (unrotX + (renderW / 2)) / renderW;
+            const normY = (unrotY + (renderH / 2)) / renderH;
 
             // Immediate Visual Ripple
             const ripple = document.getElementById('touchFeedback');
