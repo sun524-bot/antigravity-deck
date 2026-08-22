@@ -17,7 +17,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
-        #liveFeed { transform-origin: center center; width: 100%; height: 100%; object-fit: contain; }
+        #liveFeed { transform-origin: center center; }
         * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
         body { background: #070b14; color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow-x: hidden; height: 100vh; }
         .glass-modal { background: rgba(13, 20, 36, 0.95); backdrop-filter: blur(16px); border: 1px solid rgba(51, 65, 85, 0.6); }
@@ -159,7 +159,7 @@
     <!-- 2. Main Live Screen Canvas Area (Full Height & Free Pan) -->
     <main class="flex-1 relative flex items-center justify-center overflow-hidden bg-black p-0.5">
         <div id="viewportContainer" class="relative w-full h-full flex items-center justify-center overflow-hidden touch-none">
-            <img id="liveFeed" src="" alt="Live PC Screen" style="width:100%;height:100%;object-fit:contain;max-width:100%;max-height:100%;" class="cursor-crosshair rounded shadow-2xl transition-transform duration-75 ease-out select-none" draggable="false">
+            <img id="liveFeed" src="" alt="Live PC Screen" class="cursor-crosshair rounded shadow-2xl transition-transform duration-75 ease-out select-none" draggable="false">
             <div id="touchFeedback" class="absolute hidden w-8 h-8 rounded-full border-2 border-cyan-400 bg-cyan-400/30 pointer-events-none transform -translate-x-1/2 -translate-y-1/2"></div>
         </div>
     <audio id="pcAudioElement" preload="none"></audio>
@@ -556,8 +556,8 @@
             if (img) {
                 img.style.maxWidth = '100%';
                 img.style.maxHeight = '100%';
-                img.style.width = '100%';
-                img.style.height = '100%';
+                img.style.width = 'auto';
+                img.style.height = 'auto';
                 img.style.objectFit = 'contain';
             }
             applyTransform();
@@ -1190,6 +1190,7 @@
         }
 
         window.addEventListener('DOMContentLoaded', () => {
+            resetZoomAndPan();
             setInterval(sendHeartbeat, 5000);
             sendHeartbeat();
             startLiveFeed();
