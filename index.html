@@ -1,0 +1,1199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Antigravity Mobile Control Deck</title>
+    
+    <link rel="manifest" href="/antigravity-deck/manifest.json">
+    <meta name="theme-color" content="#070b14">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Control Deck">
+    <link rel="apple-touch-icon" href="/antigravity-deck/icon-192.png">
+    <link rel="icon" type="image/png" href="/antigravity-deck/icon-192.png">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        #liveFeed { transform-origin: center center; }
+        * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+        body { background: #070b14; color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow-x: hidden; height: 100vh; }
+        .glass-modal { background: rgba(13, 20, 36, 0.95); backdrop-filter: blur(16px); border: 1px solid rgba(51, 65, 85, 0.6); }
+        .pulse-dot { animation: pulse 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .4; transform: scale(.85); } }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .key-btn { background: #1e293b; border: 1px solid #334155; color: #e2e8f0; border-radius: 6px; padding: 4px 8px; font-size: 11px; font-weight: 600; white-space: nowrap; transition: all 0.1s; }
+        .key-btn:active { background: #0284c7; border-color: #38bdf8; transform: scale(0.95); }
+        .app-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; padding: 12px 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; transition: all 0.15s; cursor: pointer; text-align: center; }
+        .app-card:hover { border-color: #38bdf8; background: #1e293b; }
+        .app-card:active { transform: scale(0.95); background: #0369a1; }
+    </style>
+
+    <script>
+        const GIST_RAW_URL = "https://gist.githubusercontent.com/sun524-bot/cb9502af01846017742904fc2650a319/raw/deck_state.json";
+        let activeTunnelHost = "";
+
+        let SERVER_SCREEN_W = 1920;
+        let SERVER_SCREEN_H = 1200;
+
+        async function resolveTunnelHost() {
+            try {
+                const res = await fetch(GIST_RAW_URL + "?t=" + Date.now());
+                if (res.ok) {
+                    const text = (await res.text()).replace(/^\uFEFF/, '').trim();
+                    const data = JSON.parse(text);
+                    if (data && data.tunnel_url) {
+                        activeTunnelHost = data.tunnel_url.replace(/\/$/, "");
+                        console.log("Resolved active tunnel host:", activeTunnelHost);
+                        fetchScreenMetrics();
+                    }
+                }
+            } catch (e) {
+                console.error("Failed to resolve tunnel host:", e);
+            }
+        }
+
+        async function fetchScreenMetrics() {
+            try {
+                const hostPrefix = activeTunnelHost ? activeTunnelHost : "";
+                const res = await fetch(hostPrefix + '/api/status?auth=' + AUTH_TOKEN);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.screen_w && data.screen_h) {
+                        SERVER_SCREEN_W = data.screen_w;
+                        SERVER_SCREEN_H = data.screen_h;
+                        console.log(`PC Resolution: ${SERVER_SCREEN_W}x${SERVER_SCREEN_H}`);
+                    }
+                }
+            } catch (e) {}
+        }
+
+        const originalFetch = window.fetch;
+        window.fetch = async function(url, options) {
+            if (typeof url === 'string') {
+                if (url.startsWith('/api') || url.startsWith('/snapshot') || url.startsWith('/audio')) {
+                    if (!activeTunnelHost) await resolveTunnelHost();
+                    if (activeTunnelHost) {
+                        url = activeTunnelHost + url;
+                    }
+                }
+            }
+            return originalFetch(url, options);
+        };
+        resolveTunnelHost();
+
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/antigravity-deck/sw.js', { scope: '/antigravity-deck/' })
+                    .then(reg => console.log('SW registered on /antigravity-deck/', reg))
+                    .catch(err => console.error('SW registration failed:', err));
+            });
+        }
+    </script>
+</head>
+<body class="h-screen flex flex-col select-none bg-[#070b14] overflow-hidden">
+
+    <!-- 1. Top Header Bar (Fully Scrollable on Mobile so NO buttons are cut off!) -->
+    <header class="sticky top-0 z-30 px-2.5 py-2 bg-slate-950/95 backdrop-blur-md border-b border-slate-800 flex items-center justify-between text-xs gap-2 shrink-0">
+        <!-- Left: Logo & FPS -->
+        <div class="flex items-center gap-1.5 shrink-0">
+            <span class="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981] pulse-dot"></span>
+            <span class="font-bold text-xs text-slate-100 tracking-tight">Deck</span>
+            <span id="fpsBadge" class="text-[10px] font-mono text-cyan-400 bg-cyan-950/80 px-1 py-0.5 rounded border border-cyan-800">12 FPS</span>
+            <button onclick="openModal('viewersModal')" id="viewersBadge" class="text-[10px] font-mono text-emerald-400 bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-800 flex items-center gap-1 cursor-pointer hover:border-emerald-500 transition active:scale-95" title="Connected Live Devices">
+                <i class="fa-solid fa-users text-[9px]"></i> <span id="viewerCountText">1 Live</span>
+            </button>
+        </div>
+
+        <!-- Right: Horizontally Scrollable Action Bar (Never cut off!) -->
+        <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 pr-1">
+            <!-- Mode Switcher -->
+            <button onclick="setInteraction('touch')" id="btnTouch" class="p-1.5 px-2 rounded-lg bg-blue-600 text-white font-semibold flex items-center gap-1 shadow-sm text-[11px] shrink-0" title="Touch Mode">
+                <i class="fa-solid fa-hand-pointer text-amber-300"></i>
+            </button>
+            <button onclick="setInteraction('mouse')" id="btnMouse" class="p-1.5 px-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 font-semibold flex items-center gap-1 shadow-sm text-[11px] shrink-0" title="Mouse Mode">
+                <i class="fa-solid fa-computer-mouse"></i>
+            </button>
+
+            <!-- Zoom / View Modal Trigger & Quick Reset -->
+            <div class="flex items-center gap-1 shrink-0">
+                <button onclick="openModal('zoomModal')" id="zoomBtn" class="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 font-semibold flex items-center gap-1 hover:border-cyan-500 text-[11px]" title="Change Zoom & Viewport">
+                    <i class="fa-solid fa-magnifying-glass text-cyan-400"></i> <span id="zoomLabel">Fit</span>
+                </button>
+                <button onclick="resetZoomAndPan()" class="p-1 rounded-lg bg-slate-900 border border-slate-700 text-slate-400 hover:text-cyan-400 text-[11px]" title="Reset to Fit Screen">
+                    <i class="fa-solid fa-arrows-to-dot"></i>
+                </button>
+            </div>
+
+            <!-- Live Audio Stream Toggle -->
+            <button onclick="togglePcAudio()" id="btnAudio" class="px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 font-semibold flex items-center gap-1 text-[11px] shrink-0 hover:border-cyan-500" title="Listen to Computer Audio">
+                <i class="fa-solid fa-volume-xmark text-slate-400" id="audioIcon"></i> <span id="audioLabel">Audio: OFF</span>
+            </button>
+
+            <!-- Rotate Screen 90° (Landscape in Portrait) -->
+            <button onclick="toggleRotateScreen()" id="rotateBtn" class="px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 font-semibold flex items-center gap-1 text-[11px] shrink-0" title="Rotate Screen 90°">
+                <i class="fa-solid fa-rotate text-cyan-400"></i>
+            </button>
+
+            <!-- Modals Triggers -->
+            <button onclick="openModal('tasksModal')" class="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 font-semibold flex items-center gap-1 hover:border-cyan-500 text-[11px] shrink-0">
+                <i class="fa-solid fa-table-list text-cyan-400"></i> Tasks
+            </button>
+            <button onclick="openModal('filesModal')" class="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 font-semibold flex items-center gap-1 hover:border-cyan-500 text-[11px] shrink-0">
+                <i class="fa-solid fa-folder text-amber-400"></i> Files
+            </button>
+            <button onclick="openModal('appsModal')" class="px-2.5 py-1 rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-semibold flex items-center gap-1 shadow-md text-[11px] shrink-0">
+                <i class="fa-solid fa-rocket text-cyan-200"></i> Apps
+            </button>
+
+            <!-- Keyboard & Fullscreen & Settings -->
+            <button onclick="focusTextInput()" class="p-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-400 hover:text-white shrink-0" title="Keyboard"><i class="fa-solid fa-keyboard"></i></button>
+            <button onclick="toggleFullScreen()" class="p-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-400 hover:text-white shrink-0" title="Fullscreen"><i class="fa-solid fa-expand"></i></button>
+            <button onclick="openModal('settingsModal')" class="p-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-400 hover:text-white shrink-0" title="Settings"><i class="fa-solid fa-gear"></i></button>
+        </div>
+    </header>
+
+    <!-- 2. Main Live Screen Canvas Area (Full Height & Free Pan) -->
+    <main class="flex-1 relative flex items-center justify-center overflow-hidden bg-black p-0.5">
+        <div id="viewportContainer" class="relative w-full h-full flex items-center justify-center overflow-hidden touch-none">
+            <img id="liveFeed" src="" alt="Live PC Screen" class="cursor-crosshair rounded shadow-2xl transition-transform duration-75 ease-out select-none" draggable="false">
+            <div id="touchFeedback" class="absolute hidden w-8 h-8 rounded-full border-2 border-cyan-400 bg-cyan-400/30 pointer-events-none transform -translate-x-1/2 -translate-y-1/2"></div>
+        </div>
+    <audio id="pcAudioElement" preload="none"></audio>
+    </main>
+    <!-- Floating Restore Controls Button (Visible only during Immersive Fullscreen Mode) -->
+    <button onclick="toggleImmersiveMode()" id="immersiveFloatingBtn" class="hidden fixed top-3 right-3 z-50 px-3 py-1.5 rounded-full bg-slate-900/90 border border-cyan-500/60 text-cyan-300 font-bold text-xs shadow-2xl backdrop-blur-md flex items-center gap-1.5 active:scale-95 transition">
+        <i class="fa-solid fa-expand text-cyan-400"></i> Show Controls
+    </button>
+
+
+    <!-- 3. Persistent Bottom Quick Key Strip & Text Input Bar -->
+    <footer class="sticky bottom-0 z-30 bg-slate-950/95 backdrop-blur-md border-t border-slate-800 p-2 space-y-1.5 shrink-0">
+        <!-- Quick Hotkeys Horizontal Scrolling Strip -->
+        <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 px-0.5">
+            <!-- Navigation & Scroll Controls -->
+            <button onclick="scrollWheel(-150)" class="key-btn bg-cyan-950/80 border-cyan-800 text-cyan-300 font-bold" title="Scroll Down Page"><i class="fa-solid fa-angles-down"></i> Scroll Down</button>
+            <button onclick="scrollWheel(150)" class="key-btn bg-cyan-950/80 border-cyan-800 text-cyan-300 font-bold" title="Scroll Up Page"><i class="fa-solid fa-angles-up"></i> Scroll Up</button>
+            <button onclick="sendKey('pgdn')" class="key-btn text-yellow-300" title="Page Down">⇟ PgDn</button>
+            <button onclick="sendKey('pgup')" class="key-btn text-yellow-300" title="Page Up">⇞ PgUp</button>
+
+            <!-- Delete & Backspace & Editing -->
+            <button onclick="sendKey('backspace')" class="key-btn bg-red-950/80 border-red-800 text-red-300 font-bold" title="Backspace">⌫ Backspace</button>
+            <button onclick="sendKey('del')" class="key-btn bg-red-950/80 border-red-800 text-red-300 font-bold" title="Delete">Del</button>
+            <button onclick="sendKey('space')" class="key-btn">Space</button>
+            <button onclick="sendKey('enter')" class="key-btn bg-emerald-950/80 border-emerald-800 text-emerald-300 font-bold">Enter</button>
+
+            <!-- Shortcuts & Navigation -->
+            <button onclick="sendKey('esc')" class="key-btn">Esc</button>
+            <button onclick="sendKey('tab')" class="key-btn">Tab</button>
+            <button onclick="sendKey('win')" class="key-btn flex items-center gap-1"><i class="fa-brands fa-windows text-blue-400"></i> Win</button>
+            <button onclick="sendKey('win_s')" class="key-btn flex items-center gap-1"><i class="fa-solid fa-magnifying-glass text-cyan-400"></i> Search</button>
+            <button onclick="sendKey('win_r')" class="key-btn flex items-center gap-1"><i class="fa-solid fa-bolt text-yellow-400"></i> Run</button>
+            <button onclick="sendKey('ctrl_c')" class="key-btn">Ctrl+C</button>
+            <button onclick="sendKey('ctrl_v')" class="key-btn">Ctrl+V</button>
+            <button onclick="sendKey('ctrl_z')" class="key-btn">Ctrl+Z</button>
+            <button onclick="sendKey('ctrl_a')" class="key-btn">Ctrl+A</button>
+            <button onclick="sendKey('alt_tab')" class="key-btn">Alt+Tab</button>
+            <button onclick="sendKey('win_d')" class="key-btn">Win+D</button>
+            <button onclick="sendKey('f11')" class="key-btn">🗖</button>
+            <button onclick="sendKey('up')" class="key-btn">▲</button>
+            <button onclick="sendKey('down')" class="key-btn">▼</button>
+            <button onclick="sendKey('left')" class="key-btn">◄</button>
+            <button onclick="sendKey('right')" class="key-btn">►</button>
+            <button onclick="sendKey('f5')" class="key-btn">F5</button>
+        </div>
+
+        <!-- Text Input & Send Bar with File Attachment Button -->
+        <div class="flex items-center gap-2">
+            <!-- Hidden File Input for Mobile Upload -->
+            <input type="file" id="fileUploadInput" class="hidden" onchange="handleFileUpload(event)">
+            <button onclick="triggerFileUpload()" class="p-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-400 hover:text-cyan-400 active:scale-95" title="Upload Photo or File to PC">
+                <i class="fa-solid fa-paperclip text-sm"></i>
+            </button>
+
+            <!-- Text Input -->
+            <div class="flex-1 relative">
+                <input type="text" id="quickTextInput" placeholder="Type text to send to PC..." class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500" onkeydown="if(event.key==='Enter') sendQuickText()">
+            </div>
+
+            <!-- Send Button -->
+            <button onclick="sendQuickText()" class="px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 active:scale-95 text-white font-bold rounded-xl text-xs shadow-md">Send</button>
+        </div>
+    </footer>
+
+    <!-- ==================== MODALS ==================== -->
+
+    <!-- Modal 1: 🚀 Quick Launchers & Apps -->
+    <div id="appsModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 md:p-6">
+        <div class="glass-modal rounded-2xl p-4 md:p-5 max-w-lg w-full max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl">
+            <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+                <h3 class="font-bold text-sm md:text-base text-slate-100 flex items-center gap-2">
+                    <i class="fa-solid fa-rocket text-cyan-400"></i> Quick Launchers & Apps
+                </h3>
+                <button onclick="closeModal('appsModal')" class="text-slate-400 hover:text-white text-xl">&times;</button>
+            </div>
+
+            <!-- Search PC Software or Apps -->
+            <div class="space-y-1">
+                <div class="flex gap-2">
+                    <input type="text" id="appSearchInput" placeholder="Search PC software or apps..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500" onkeydown="if(event.key==='Enter') searchAndLaunchApp()">
+                    <button onclick="searchAndLaunchApp()" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold rounded-xl text-xs">Search</button>
+                </div>
+            </div>
+
+            <!-- Custom Command / URL -->
+            <div class="space-y-1">
+                <div class="text-[11px] font-bold text-slate-400 tracking-wider uppercase">Custom Command / URL</div>
+                <div class="flex gap-2">
+                    <input type="text" id="customCmdInput" placeholder="Type custom command, URL, or path..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500" onkeydown="if(event.key==='Enter') runCustomCommand()">
+                    <button onclick="runCustomCommand()" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold rounded-xl text-xs">Run</button>
+                </div>
+            </div>
+
+            <!-- Windows System Shortcuts -->
+            <div class="space-y-2">
+                <div class="text-[11px] font-bold text-slate-400 tracking-wider uppercase">Windows System Shortcuts</div>
+                <div class="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                    <div onclick="sendKey('win_s')" class="app-card"><i class="fa-solid fa-magnifying-glass text-cyan-400 text-lg"></i><span class="text-[11px] font-medium">Win Search</span></div>
+                    <div onclick="sendKey('win_r')" class="app-card"><i class="fa-solid fa-bolt text-amber-400 text-lg"></i><span class="text-[11px] font-medium">Run Dialog</span></div>
+                    <div onclick="sendKey('win')" class="app-card"><i class="fa-brands fa-windows text-blue-400 text-lg"></i><span class="text-[11px] font-medium">Start Menu</span></div>
+                    <div onclick="sendKey('win_tab')" class="app-card"><i class="fa-solid fa-table-columns text-emerald-400 text-lg"></i><span class="text-[11px] font-medium">Task View</span></div>
+                    <div onclick="sendKey('win_i')" class="app-card"><i class="fa-solid fa-gear text-slate-400 text-lg"></i><span class="text-[11px] font-medium">Settings</span></div>
+                    <div onclick="sendKey('alt_tab')" class="app-card"><i class="fa-solid fa-arrows-rotate text-purple-400 text-lg"></i><span class="text-[11px] font-medium">Alt + Tab</span></div>
+                </div>
+            </div>
+
+            <!-- Applications Grid -->
+            <div class="space-y-2">
+                <div class="text-[11px] font-bold text-slate-400 tracking-wider uppercase">Applications</div>
+                <div class="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                    <div onclick="launchApp('antigravity')" class="app-card"><i class="fa-solid fa-rocket text-cyan-400 text-lg"></i><span class="text-[11px] font-medium">Antigravity</span></div>
+                    <div onclick="launchApp('vscode')" class="app-card"><i class="fa-solid fa-code text-blue-400 text-lg"></i><span class="text-[11px] font-medium">VS Code</span></div>
+                    <div onclick="launchApp('powershell')" class="app-card"><i class="fa-solid fa-terminal text-emerald-400 text-lg"></i><span class="text-[11px] font-medium">PowerShell</span></div>
+                    <div onclick="launchApp('cmd')" class="app-card"><i class="fa-solid fa-keyboard text-slate-400 text-lg"></i><span class="text-[11px] font-medium">CMD</span></div>
+                    <div onclick="launchApp('explorer')" class="app-card"><i class="fa-solid fa-folder-open text-amber-400 text-lg"></i><span class="text-[11px] font-medium">Explorer</span></div>
+                    <div onclick="launchApp('chrome')" class="app-card"><i class="fa-brands fa-chrome text-red-400 text-lg"></i><span class="text-[11px] font-medium">Browser</span></div>
+                    <div onclick="launchApp('taskmgr')" class="app-card"><i class="fa-solid fa-chart-simple text-indigo-400 text-lg"></i><span class="text-[11px] font-medium">Task Manager</span></div>
+                    <div onclick="launchApp('notepad')" class="app-card"><i class="fa-solid fa-file-pen text-yellow-400 text-lg"></i><span class="text-[11px] font-medium">Notepad</span></div>
+                    <div onclick="launchApp('calc')" class="app-card"><i class="fa-solid fa-calculator text-cyan-400 text-lg"></i><span class="text-[11px] font-medium">Calculator</span></div>
+                    <div onclick="launchApp('obsidian')" class="app-card"><i class="fa-solid fa-gem text-purple-400 text-lg"></i><span class="text-[11px] font-medium">Obsidian</span></div>
+                    <div onclick="launchApp('spotify')" class="app-card"><i class="fa-brands fa-spotify text-emerald-400 text-lg"></i><span class="text-[11px] font-medium">Spotify</span></div>
+                    <div onclick="searchAndLaunchApp('douyin')" class="app-card"><i class="fa-brands fa-tiktok text-pink-400 text-lg"></i><span class="text-[11px] font-medium">抖音 Douyin</span></div>
+                </div>
+            </div>
+
+            <!-- Media & Volume -->
+            <div class="space-y-2">
+                <div class="text-[11px] font-bold text-slate-400 tracking-wider uppercase">Media & Volume</div>
+                <div class="grid grid-cols-5 gap-2">
+                    <div onclick="togglePcAudio()" class="app-card"><i class="fa-solid fa-headphones text-pink-400 text-lg"></i><span class="text-[11px] font-medium">Listen to PC</span></div>
+                    <div onclick="controlMedia('up')" class="app-card"><i class="fa-solid fa-volume-high text-cyan-400 text-lg"></i><span class="text-[11px] font-medium">Vol +</span></div>
+                    <div onclick="controlMedia('down')" class="app-card"><i class="fa-solid fa-volume-low text-cyan-400 text-lg"></i><span class="text-[11px] font-medium">Vol -</span></div>
+                    <div onclick="controlMedia('mute')" class="app-card"><i class="fa-solid fa-volume-xmark text-red-400 text-lg"></i><span class="text-[11px] font-medium">Mute</span></div>
+                    <div onclick="controlMedia('play_pause')" class="app-card"><i class="fa-solid fa-forward-step text-emerald-400 text-lg"></i><span class="text-[11px] font-medium">Play / Pause</span></div>
+                </div>
+            </div>
+
+            <!-- System & Power -->
+            <div class="space-y-2">
+                <div class="text-[11px] font-bold text-slate-400 tracking-wider uppercase">System & Power</div>
+                <div class="grid grid-cols-5 gap-2">
+                    <div onclick="togglePcAudio()" class="app-card"><i class="fa-solid fa-headphones text-pink-400 text-lg"></i><span class="text-[11px] font-medium">Listen to PC</span></div>
+                    <div onclick="controlPower('lock')" class="app-card"><i class="fa-solid fa-lock text-amber-400 text-lg"></i><span class="text-[11px] font-medium">Lock PC</span></div>
+                    <div onclick="controlPower('desktop')" class="app-card"><i class="fa-solid fa-desktop text-blue-400 text-lg"></i><span class="text-[11px] font-medium">Show Desktop</span></div>
+                    <div onclick="controlPower('sleep')" class="app-card"><i class="fa-solid fa-moon text-indigo-400 text-lg"></i><span class="text-[11px] font-medium">Sleep</span></div>
+                    <div onclick="controlPower('restart')" class="app-card"><i class="fa-solid fa-rotate text-red-400 text-lg"></i><span class="text-[11px] font-medium">Restart</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal 2: 📁 Search & Open Files on PC -->
+    <div id="filesModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 md:p-6">
+        <div class="glass-modal rounded-2xl p-4 md:p-5 max-w-xl w-full max-h-[90vh] flex flex-col space-y-3.5 shadow-2xl">
+            <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+                <h3 class="font-bold text-sm md:text-base text-slate-100 flex items-center gap-2">
+                    <i class="fa-solid fa-folder-open text-amber-400"></i> Search & Open Files on PC
+                </h3>
+                <button onclick="closeModal('filesModal')" class="text-slate-400 hover:text-white text-xl">&times;</button>
+            </div>
+
+            <!-- Blue Dashed Upload Dropzone -->
+            <div onclick="triggerFileUpload()" class="p-4 rounded-2xl border-2 border-dashed border-cyan-500/60 bg-cyan-950/20 hover:bg-cyan-950/40 cursor-pointer flex items-center gap-3 transition">
+                <div class="w-10 h-10 rounded-xl bg-cyan-600/30 flex items-center justify-center text-cyan-400 text-xl">
+                    <i class="fa-solid fa-cloud-arrow-up"></i>
+                </div>
+                <div>
+                    <div class="text-xs font-bold text-cyan-300">Send File or Photo to Project</div>
+                    <div class="text-[11px] text-slate-400">Saved to Antigravity/Received_Files on your PC</div>
+                </div>
+            </div>
+
+            <!-- Search Input -->
+            <div class="relative">
+                <input type="text" id="fileSearchInput" placeholder="Search files (e.g. report, .pdf, invoice, python)..." class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500" oninput="searchFiles()">
+            </div>
+
+            <!-- Category Pills Filter -->
+            <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar text-xs">
+                <button onclick="filterFileCategory('all', this)" class="file-cat-btn px-3 py-1 rounded-full bg-cyan-600 text-white font-semibold">All</button>
+                <button onclick="filterFileCategory('documents', this)" class="file-cat-btn px-3 py-1 rounded-full bg-slate-800 text-slate-400 font-semibold hover:text-white">📄 Documents</button>
+                <button onclick="filterFileCategory('pdfs', this)" class="file-cat-btn px-3 py-1 rounded-full bg-slate-800 text-slate-400 font-semibold hover:text-white">📕 PDFs</button>
+                <button onclick="filterFileCategory('images', this)" class="file-cat-btn px-3 py-1 rounded-full bg-slate-800 text-slate-400 font-semibold hover:text-white">🖼️ Images</button>
+                <button onclick="filterFileCategory('code', this)" class="file-cat-btn px-3 py-1 rounded-full bg-slate-800 text-slate-400 font-semibold hover:text-white">💻 Code</button>
+            </div>
+
+            <!-- Dynamic File List -->
+            <div id="fileListContainer" class="flex-1 overflow-y-auto max-h-72 space-y-2 pr-1 text-xs">
+                <div class="text-center text-slate-500 py-6">Loading files...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal 3: 📋 Tasks & System Monitor -->
+    <div id="tasksModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 md:p-6">
+        <div class="glass-modal rounded-2xl p-4 md:p-5 max-w-lg w-full max-h-[90vh] flex flex-col space-y-3.5 shadow-2xl">
+            <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+                <h3 class="font-bold text-sm md:text-base text-slate-100 flex items-center gap-2">
+                    <i class="fa-solid fa-table-list text-cyan-400"></i> Running Processes & Tasks
+                </h3>
+                <button onclick="closeModal('tasksModal')" class="text-slate-400 hover:text-white text-xl">&times;</button>
+            </div>
+
+            <!-- Process List -->
+            <div id="tasksListContainer" class="flex-1 overflow-y-auto max-h-80 space-y-2 pr-1 text-xs">
+                <div class="text-center text-slate-500 py-6">Loading running tasks...</div>
+            </div>
+
+            <!-- Refresh Button -->
+            <button onclick="fetchTasksList()" class="w-full py-2 bg-slate-800 hover:bg-slate-700 text-cyan-400 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5">
+                <i class="fa-solid fa-arrows-rotate"></i> Refresh Processes
+            </button>
+        </div>
+    </div>
+
+    <!-- Modal 5: 👥 Connected Devices & Live Viewers -->
+    <div id="viewersModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 md:p-6">
+        <div class="glass-modal rounded-2xl p-4 md:p-5 max-w-md w-full max-h-[90vh] flex flex-col space-y-3.5 shadow-2xl">
+            <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+                <div>
+                    <h3 class="font-bold text-sm md:text-base text-slate-100 flex items-center gap-2">
+                        <i class="fa-solid fa-users text-emerald-400"></i> Connected Live Devices
+                    </h3>
+                    <div class="text-[11px] text-slate-400">Real-time devices viewing your Control Deck</div>
+                </div>
+                <button onclick="closeModal('viewersModal')" class="text-slate-400 hover:text-white text-xl">&times;</button>
+            </div>
+
+            <!-- Viewers List -->
+            <div id="viewersListContainer" class="flex-1 overflow-y-auto max-h-72 space-y-2 pr-1 text-xs">
+                <div class="text-center text-slate-500 py-6">Loading connected devices...</div>
+            </div>
+
+            <!-- Refresh Button -->
+            <button onclick="fetchViewersList()" class="w-full py-2 bg-slate-800 hover:bg-slate-700 text-emerald-400 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5">
+                <i class="fa-solid fa-arrows-rotate"></i> Refresh Viewers
+            </button>
+        </div>
+    </div>
+
+            <!-- Modal 0: 🔍 Zoom & Screen Viewport Settings -->
+    <div id="zoomModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 md:p-6">
+        <div class="glass-modal rounded-2xl p-4 md:p-5 max-w-sm w-full space-y-4 shadow-2xl">
+            <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+                <h3 class="font-bold text-sm text-slate-100 flex items-center gap-2">
+                    <i class="fa-solid fa-magnifying-glass text-cyan-400"></i> Screen Viewport & Display
+                </h3>
+                <button onclick="closeModal('zoomModal')" class="text-slate-400 hover:text-white text-xl">&times;</button>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2 text-xs">
+                <button onclick="setZoomLevel('fit')" class="p-3 rounded-xl bg-slate-900 border border-cyan-500/50 hover:bg-cyan-950 text-cyan-300 font-bold flex flex-col items-center gap-1 shadow-sm text-center">
+                    <i class="fa-solid fa-compress text-base"></i>
+                    <span>Fit (100% Desktop)</span>
+                    <span class="text-[10px] text-slate-400 font-normal">All 4 Corners & Taskbar</span>
+                </button>
+                <button onclick="setZoomLevel('fill')" class="p-3 rounded-xl bg-slate-900 border border-purple-500/50 hover:bg-purple-950 text-purple-300 font-bold flex flex-col items-center gap-1 shadow-sm text-center">
+                    <i class="fa-solid fa-expand text-base"></i>
+                    <span>Fill Screen (Zero Gap)</span>
+                    <span class="text-[10px] text-slate-400 font-normal">Edge-to-Edge Tablet</span>
+                </button>
+                <button onclick="setZoomLevel('fit_width')" class="p-2.5 rounded-xl bg-slate-900 border border-slate-700 hover:bg-slate-800 text-slate-200 font-bold flex flex-col items-center gap-1 shadow-sm text-center">
+                    <i class="fa-solid fa-arrows-left-right text-sm text-blue-400"></i>
+                    <span>Fit Width</span>
+                    <span class="text-[10px] text-slate-400 font-normal">Full Tablet Width</span>
+                </button>
+                <button onclick="setZoomLevel('fit_height')" class="p-2.5 rounded-xl bg-slate-900 border border-slate-700 hover:bg-slate-800 text-slate-200 font-bold flex flex-col items-center gap-1 shadow-sm text-center">
+                    <i class="fa-solid fa-arrows-up-down text-sm text-emerald-400"></i>
+                    <span>Fit Height</span>
+                    <span class="text-[10px] text-slate-400 font-normal">Full Tablet Height</span>
+                </button>
+            </div>
+
+            <div class="space-y-1.5 text-xs">
+                <div class="text-[11px] font-bold text-slate-400 tracking-wider uppercase">Zoom Multipliers</div>
+                <div class="grid grid-cols-3 gap-2">
+                    <button onclick="setZoomLevel(1.0)" class="py-2.5 rounded-xl bg-slate-900 border border-slate-700 hover:border-cyan-500 text-slate-200 font-semibold text-center">100% (1:1)</button>
+                    <button onclick="setZoomLevel(1.25)" class="py-2.5 rounded-xl bg-slate-900 border border-slate-700 hover:border-cyan-500 text-slate-200 font-semibold text-center">125%</button>
+                    <button onclick="setZoomLevel(1.5)" class="py-2.5 rounded-xl bg-slate-900 border border-slate-700 hover:border-cyan-500 text-slate-200 font-semibold text-center">150%</button>
+                    <button onclick="setZoomLevel(2.0)" class="py-2.5 rounded-xl bg-slate-900 border border-slate-700 hover:border-cyan-500 text-slate-200 font-semibold text-center">200%</button>
+                    <button onclick="setZoomLevel(2.5)" class="py-2.5 rounded-xl bg-slate-900 border border-slate-700 hover:border-cyan-500 text-slate-200 font-semibold text-center">250%</button>
+                    <button onclick="setZoomLevel(3.0)" class="py-2.5 rounded-xl bg-slate-900 border border-slate-700 hover:border-cyan-500 text-slate-200 font-semibold text-center">300%</button>
+                </div>
+            </div>
+
+            <!-- Quick Reset Button -->
+            <button onclick="resetZoomAndPan()" class="w-full py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 active:scale-95 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-md">
+                <i class="fa-solid fa-arrows-to-dot"></i> Reset & Center Screen (Fit)
+            </button>
+        </div>
+    </div>
+
+    <!-- Modal 4: ⚙️ Settings & Connection -->
+    <div id="settingsModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 md:p-6">
+        <div class="glass-modal rounded-2xl p-4 md:p-5 max-w-md w-full space-y-4 shadow-2xl">
+            <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+                <h3 class="font-bold text-sm text-slate-100 flex items-center gap-2">
+                    <i class="fa-solid fa-gear text-cyan-400"></i> Deck Settings
+                </h3>
+                <button onclick="closeModal('settingsModal')" class="text-slate-400 hover:text-white text-xl">&times;</button>
+            </div>
+
+            <div class="space-y-1.5 text-xs">
+                <label class="font-semibold text-slate-300">Security Auth Token:</label>
+                <input type="text" id="settingAuthToken" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-cyan-500" value="c85e4f126814fb14">
+            </div>
+
+            <div class="space-y-1.5 text-xs">
+                <div class="flex justify-between text-slate-300 font-semibold">
+                    <span>Frame Refresh Interval:</span>
+                    <span id="fpsVal" class="text-cyan-400 font-mono">100ms (~10 FPS)</span>
+                </div>
+                <input type="range" min="50" max="500" step="25" value="100" class="w-full accent-cyan-500" oninput="updateRefreshRate(this.value)">
+            </div>
+
+            <button onclick="saveSettings()" class="w-full py-2 bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-bold rounded-xl text-xs shadow-md">Save Settings</button>
+        </div>
+    </div>
+
+    <!-- ==================== JAVASCRIPT LOGIC ==================== -->
+    <script>
+        let AUTH_TOKEN = "c85e4f126814fb14";
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('auth')) {
+            AUTH_TOKEN = urlParams.get('auth');
+            localStorage.setItem('deck_auth_token', AUTH_TOKEN);
+        } else if (localStorage.getItem('deck_auth_token')) {
+            AUTH_TOKEN = localStorage.getItem('deck_auth_token');
+        }
+
+        let interactionMode = 'touch';
+        let currentZoom = 1.0;
+        let isFitWidth = false;
+        let isRotated = false;
+        let panX = 0, panY = 0;
+        let refreshIntervalMs = 100;
+        let activeCategory = 'all';
+
+        // Modal Management
+        function openModal(id) {
+            document.getElementById(id).classList.remove('hidden');
+            if (id === 'filesModal') fetchFilesList();
+            if (id === 'tasksModal') fetchTasksList();
+            if (id === 'viewersModal') fetchViewersList();
+        }
+        function closeModal(id) {
+            document.getElementById(id).classList.add('hidden');
+        }
+
+        // Universal API Fetcher that routes through activeTunnelHost
+        function apiFetch(endpoint, options = {}) {
+            const hostPrefix = activeTunnelHost ? activeTunnelHost : "";
+            const sep = endpoint.includes('?') ? '&' : '?';
+            const url = hostPrefix + endpoint + sep + 'auth=' + AUTH_TOKEN;
+            return fetch(url, {
+                keepalive: true,
+                ...options,
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(options.headers || {})
+                }
+            });
+        }
+
+
+        // Zoom Management
+        function toggleZoomMenu() {
+            document.getElementById('zoomMenu').classList.toggle('hidden');
+        }
+
+        let isImmersive = false;
+        function toggleImmersiveMode() {
+            isImmersive = !isImmersive;
+            const header = document.querySelector('header');
+            const footer = document.querySelector('footer');
+            const floatBtn = document.getElementById('immersiveFloatingBtn');
+            if (isImmersive) {
+                if (header) header.classList.add('hidden');
+                if (footer) footer.classList.add('hidden');
+                if (floatBtn) floatBtn.classList.remove('hidden');
+            } else {
+                if (header) header.classList.remove('hidden');
+                if (footer) footer.classList.remove('hidden');
+                if (floatBtn) floatBtn.classList.add('hidden');
+            }
+        }
+
+        function resetZoomAndPan() {
+            closeModal('zoomModal');
+            isFitWidth = false;
+            currentZoom = 1.0;
+            panX = 0; panY = 0;
+            const img = document.getElementById('liveFeed');
+            if (img) {
+                img.style.maxWidth = '100%';
+                img.style.maxHeight = '100%';
+                img.style.width = '100%';
+                img.style.height = '100%';
+                img.style.objectFit = 'contain';
+            }
+            applyTransform();
+            const zLabel = document.getElementById('zoomLabel');
+            if (zLabel) zLabel.innerText = 'Fit';
+        }
+
+        function setZoomLevel(lvl) {
+            closeModal('zoomModal');
+            const img = document.getElementById('liveFeed');
+            if (!img) return;
+
+            panX = 0; panY = 0;
+
+            if (lvl === 'fit') {
+                resetZoomAndPan();
+            } else if (lvl === 'fill') {
+                isFitWidth = false;
+                currentZoom = 1.0;
+                img.style.maxWidth = '100%';
+                img.style.maxHeight = '100%';
+                img.style.width = '100%';
+                img.style.height = '100%';
+                img.style.objectFit = 'fill';
+                applyTransform();
+                const zLabel = document.getElementById('zoomLabel');
+                if (zLabel) zLabel.innerText = 'Fill';
+            } else if (lvl === 'fit_width') {
+                isFitWidth = true;
+                currentZoom = 1.0;
+                img.style.maxWidth = 'none';
+                img.style.maxHeight = 'none';
+                img.style.width = '100%';
+                img.style.height = 'auto';
+                img.style.objectFit = 'contain';
+                applyTransform();
+                const zLabel = document.getElementById('zoomLabel');
+                if (zLabel) zLabel.innerText = 'Fit Width';
+            } else if (lvl === 'fit_height') {
+                isFitWidth = false;
+                currentZoom = 1.0;
+                img.style.maxWidth = 'none';
+                img.style.maxHeight = '100%';
+                img.style.width = 'auto';
+                img.style.height = '100%';
+                img.style.objectFit = 'contain';
+                applyTransform();
+                const zLabel = document.getElementById('zoomLabel');
+                if (zLabel) zLabel.innerText = 'Fit Height';
+            } else {
+                isFitWidth = false;
+                currentZoom = parseFloat(lvl);
+                img.style.maxWidth = 'none';
+                img.style.maxHeight = 'none';
+                img.style.width = 'auto';
+                img.style.height = 'auto';
+                applyTransform();
+                const zLabel = document.getElementById('zoomLabel');
+                if (zLabel) zLabel.innerText = Math.round(currentZoom * 100) + '%';
+            }
+        }
+
+        function toggleRotateScreen() {
+            isRotated = !isRotated;
+            const btn = document.getElementById('rotateBtn');
+            if (isRotated) {
+                btn.className = "px-2 py-1 rounded-lg bg-blue-600 text-white font-semibold flex items-center gap-1 text-[11px] shrink-0";
+            } else {
+                btn.className = "px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 font-semibold flex items-center gap-1 text-[11px] shrink-0";
+            }
+            applyTransform();
+        }
+
+        function applyTransform() {
+            const img = document.getElementById('liveFeed');
+            const rot = isRotated ? 'rotate(90deg) ' : '';
+            img.style.transform = `translate(${panX}px, ${panY}px) ${rot}scale(${currentZoom})`;
+        }
+
+        // Mode Switching
+        function setInteraction(mode) {
+            interactionMode = mode;
+            if (mode === 'touch') {
+                document.getElementById('btnTouch').className = "p-1.5 px-2 rounded-lg bg-blue-600 text-white font-semibold flex items-center gap-1 shadow-sm text-[11px] shrink-0";
+                document.getElementById('btnMouse').className = "p-1.5 px-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 font-semibold flex items-center gap-1 shadow-sm text-[11px] shrink-0";
+            } else {
+                document.getElementById('btnMouse').className = "p-1.5 px-2 rounded-lg bg-blue-600 text-white font-semibold flex items-center gap-1 shadow-sm text-[11px] shrink-0";
+                document.getElementById('btnTouch').className = "p-1.5 px-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 font-semibold flex items-center gap-1 shadow-sm text-[11px] shrink-0";
+            }
+        }
+
+        function toggleFullScreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(() => {});
+            } else {
+                document.exitFullscreen().catch(() => {});
+            }
+        }
+
+        function focusTextInput() {
+            const inp = document.getElementById('quickTextInput');
+            inp.focus();
+        }
+
+        // Live Feed Polling
+        let isFetchingFrame = false;
+        let lastFrameTime = Date.now();
+        let frameCount = 0;
+
+        // Live PC Audio Streaming
+        let isAudioPlaying = false;
+        function togglePcAudio() {
+            const audioEl = document.getElementById('pcAudioElement');
+            const btn = document.getElementById('btnAudio');
+            const icon = document.getElementById('audioIcon');
+            const label = document.getElementById('audioLabel');
+
+            if (!isAudioPlaying) {
+                const hostPrefix = activeTunnelHost ? activeTunnelHost : "";
+                audioEl.src = hostPrefix + "/audio.mp3?auth=" + AUTH_TOKEN + "&t=" + Date.now();
+                audioEl.play().then(() => {
+                    isAudioPlaying = true;
+                    if (btn) btn.className = "px-2 py-1 rounded-lg bg-emerald-950 border border-emerald-500 text-emerald-300 font-semibold flex items-center gap-1 text-[11px] shrink-0 shadow-sm";
+                    if (icon) icon.className = "fa-solid fa-volume-high text-emerald-400 animate-pulse";
+                    if (label) label.innerText = "Audio: LIVE";
+                }).catch((err) => {
+                    console.error("Audio playback error:", err);
+                    alert("⚠️ Audio could not start automatically. Tap again to allow browser audio playback.");
+                });
+            } else {
+                audioEl.pause();
+                audioEl.src = "";
+                isAudioPlaying = false;
+                if (btn) btn.className = "px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 font-semibold flex items-center gap-1 text-[11px] shrink-0 hover:border-cyan-500";
+                if (icon) icon.className = "fa-solid fa-volume-xmark text-slate-400";
+                if (label) label.innerText = "Audio: OFF";
+            }
+        }
+
+        function startLiveFeed() {
+            const img = document.getElementById('liveFeed');
+            
+            setInterval(() => {
+                const now = Date.now();
+                const fps = Math.round((frameCount * 1000) / (now - lastFrameTime + 1));
+                const fpsEl = document.getElementById('fpsBadge');
+                if (fpsEl) fpsEl.innerText = `${fps || 12} FPS`;
+                frameCount = 0;
+                lastFrameTime = now;
+            }, 1000);
+
+            function fetchNextFrame() {
+                if (!activeTunnelHost) {
+                    setTimeout(fetchNextFrame, 300);
+                    return;
+                }
+                const nextImg = new Image();
+                let timer = setTimeout(() => {
+                    fetchNextFrame();
+                }, 2000);
+
+                nextImg.onload = () => {
+                    clearTimeout(timer);
+                    img.src = nextImg.src;
+                    frameCount++;
+                    setTimeout(fetchNextFrame, refreshIntervalMs);
+                };
+                nextImg.onerror = () => {
+                    clearTimeout(timer);
+                    setTimeout(fetchNextFrame, 200);
+                };
+                nextImg.src = activeTunnelHost + "/snapshot.jpg?auth=" + AUTH_TOKEN + "&t=" + Date.now();
+            }
+
+            fetchNextFrame();
+        }
+
+        // Highly Responsive, Zero-Lag Jitter-Tolerant Touch & Gesture Handlers
+        const viewport = document.getElementById('viewportContainer');
+        let touchStartX = 0, touchStartY = 0, touchStartTime = 0;
+        let touchMaxDist = 0;
+        let initialDistance = 0, initialZoom = 1.0;
+
+        viewport.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 1) {
+                touchStartX = e.touches[0].clientX;
+                touchStartY = e.touches[0].clientY;
+                touchStartTime = Date.now();
+                touchMaxDist = 0;
+            } else if (e.touches.length === 2) {
+                initialDistance = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+                initialZoom = currentZoom;
+            }
+        }, { passive: true });
+
+        viewport.addEventListener('touchmove', (e) => {
+            if (e.touches.length === 1) {
+                const dx = e.touches[0].clientX - touchStartX;
+                const dy = e.touches[0].clientY - touchStartY;
+                const dist = Math.hypot(dx, dy);
+                if (dist > touchMaxDist) touchMaxDist = dist;
+
+                // Only start continuous canvas panning if finger moved deliberately (>16px)
+                if (dist > 16) {
+                    panX += dx;
+                    panY += dy;
+                    touchStartX = e.touches[0].clientX;
+                    touchStartY = e.touches[0].clientY;
+                    applyTransform();
+                }
+            } else if (e.touches.length === 2) {
+                const dist = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+                if (Math.abs(dist - initialDistance) > 15 && initialDistance > 0) {
+                    currentZoom = Math.min(Math.max(initialZoom * (dist / initialDistance), 0.8), 4.5);
+                    applyTransform();
+                    document.getElementById('zoomLabel').innerText = Math.round(currentZoom * 100) + '%';
+                } else {
+                    const avgY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+                    const dy = avgY - touchStartY;
+                    if (Math.abs(dy) > 12) {
+                        scrollWheel(dy > 0 ? 120 : -120);
+                        touchStartY = avgY;
+                    }
+                }
+            }
+        }, { passive: true });
+
+        viewport.addEventListener('touchend', (e) => {
+            if (e.changedTouches.length === 1) {
+                const touch = e.changedTouches[0];
+                const duration = Date.now() - touchStartTime;
+                // Immediate Tap Detection: Under 400ms and minimal jitter (<20px) -> Trigger INSTANT CLICK!
+                if (duration < 400 && touchMaxDist < 20) {
+                    handleScreenClick(touch.clientX, touch.clientY);
+                }
+            }
+        });
+
+        viewport.addEventListener('click', (e) => {
+            if (interactionMode === 'mouse' || window.matchMedia('(pointer:fine)').matches) {
+                handleScreenClick(e.clientX, e.clientY);
+            }
+        });
+
+        function handleScreenClick(clientX, clientY) {
+            const img = document.getElementById('liveFeed');
+            const viewport = document.getElementById('viewportContainer');
+            if (!img || !viewport) return;
+
+            // Instant Haptic Feedback on phone
+            if (navigator.vibrate) {
+                try { navigator.vibrate(15); } catch(e) {}
+            }
+
+            const vRect = viewport.getBoundingClientRect();
+            const centerScreenX = vRect.left + (vRect.width / 2) + panX;
+            const centerScreenY = vRect.top + (vRect.height / 2) + panY;
+
+            let diffX = (clientX - centerScreenX) / currentZoom;
+            let diffY = (clientY - centerScreenY) / currentZoom;
+
+            let unrotX = diffX;
+            let unrotY = diffY;
+            if (isRotated) {
+                unrotX = diffY;
+                unrotY = -diffX;
+            }
+
+            const baseW = img.offsetWidth || img.clientWidth || (img.naturalWidth || 1920);
+            const baseH = img.offsetHeight || img.clientHeight || (img.naturalHeight || 1200);
+
+            const imgX = unrotX + (baseW / 2);
+            const imgY = unrotY + (baseH / 2);
+
+            const normX = imgX / baseW;
+            const normY = imgY / baseH;
+
+            // Immediate Visual Ripple
+            const ripple = document.getElementById('touchFeedback');
+            if (ripple) {
+                ripple.style.left = clientX + 'px';
+                ripple.style.top = clientY + 'px';
+                ripple.classList.remove('hidden');
+                setTimeout(() => ripple.classList.add('hidden'), 200);
+            }
+
+            if (normX >= 0 && normX <= 1 && normY >= 0 && normY <= 1) {
+                const pcX = Math.round(normX * SERVER_SCREEN_W);
+                const pcY = Math.round(normY * SERVER_SCREEN_H);
+                console.log(`Instant Touch -> PC (${pcX}, ${pcY})`);
+
+                const hostPrefix = activeTunnelHost ? activeTunnelHost : "";
+                fetch(hostPrefix + '/api/mouse/click?auth=' + AUTH_TOKEN, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ x: pcX, y: pcY, type: 'left' }),
+                    keepalive: true
+                }).catch(() => {});
+            }
+        }
+
+        // Mouse Wheel Scroll Function
+        function scrollWheel(delta) {
+            apiFetch('/api/mouse/scroll', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ delta: delta })
+            }).catch(() => {});
+        }
+
+        // Quick Key Sender
+        function sendKey(k) {
+            apiFetch('/api/keyboard/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key: k })
+            }).catch(() => {});
+        }
+
+        function sendQuickText() {
+            const inp = document.getElementById('quickTextInput');
+            const txt = inp.value;
+            if (txt) {
+                apiFetch('/api/keyboard/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: txt })
+                }).then(() => {
+                    inp.value = '';
+                }).catch(() => {});
+            }
+        }
+
+        // App Launch & Search
+        function launchApp(target) {
+            closeModal('appsModal');
+            apiFetch('/api/action/open', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ target: target })
+            }).catch(() => {});
+        }
+
+        function searchAndLaunchApp(preset) {
+            const inp = document.getElementById('appSearchInput');
+            const q = preset || inp.value.trim();
+            if (q) {
+                closeModal('appsModal');
+                apiFetch('/api/search/app', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ q: q })
+                }).catch(() => {});
+            }
+        }
+
+        function runCustomCommand() {
+            const inp = document.getElementById('customCmdInput');
+            const cmd = inp.value.trim();
+            if (cmd) {
+                closeModal('appsModal');
+                apiFetch('/api/action/open', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target: cmd })
+                }).then(() => {
+                    inp.value = '';
+                }).catch(() => {});
+            }
+        }
+
+        function controlMedia(act) {
+            apiFetch('/api/media/volume', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: act })
+            }).catch(() => {});
+        }
+
+        function controlPower(act) {
+            if (act === 'restart' && !confirm('Are you sure you want to restart your PC?')) return;
+            closeModal('appsModal');
+            apiFetch('/api/system/power', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: act })
+            }).catch(() => {});
+        }
+
+        // File Upload Handlers
+        function triggerFileUpload() {
+            document.getElementById('fileUploadInput').click();
+        }
+
+        async function handleFileUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = async function() {
+                const b64 = reader.result;
+                try {
+                    const res = await apiFetch('/api/upload', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            name: file.name,
+                            data: b64,
+                            type: file.type
+                        })
+                    });
+                    const data = await res.json();
+                    if (data.ok) {
+                        alert('✅ Uploaded: ' + data.name + '\nSaved to PC: ' + data.path);
+                        if (!document.getElementById('filesModal').classList.contains('hidden')) {
+                            fetchFilesList();
+                        }
+                    } else {
+                        alert('❌ Upload failed: ' + (data.msg || 'Unknown error'));
+                    }
+                } catch (err) {
+                    alert('❌ Upload error: ' + err.message);
+                }
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // File Manager Modal
+        async function fetchFilesList() {
+            const container = document.getElementById('fileListContainer');
+            const q = document.getElementById('fileSearchInput').value.trim();
+            container.innerHTML = '<div class="text-center text-slate-500 py-6">Searching files...</div>';
+
+            try {
+                const res = await apiFetch(`/api/files/search?q=${encodeURIComponent(q)}&cat=${activeCategory}`);
+                const data = await res.json();
+                if (data.ok && data.results && data.results.length > 0) {
+                    container.innerHTML = data.results.map(f => `
+                        <div class="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-2 hover:border-slate-700 transition">
+                            <div class="flex items-center gap-2.5 min-w-0">
+                                <div class="w-8 h-8 rounded-lg ${f.type==='image'?'bg-emerald-950 text-emerald-400':f.type==='pdf'?'bg-red-950 text-red-400':f.type==='code'?'bg-blue-950 text-blue-400':'bg-amber-950 text-amber-400'} flex items-center justify-center text-sm shrink-0">
+                                    <i class="fa-solid ${f.type==='image'?'fa-image':f.type==='pdf'?'fa-file-pdf':f.type==='code'?'fa-code':'fa-file-lines'}"></i>
+                                </div>
+                                <div class="min-w-0">
+                                    <div class="font-semibold text-slate-200 truncate text-[11px]">${f.name}</div>
+                                    <div class="text-[10px] text-slate-500 truncate">${f.size} • ${f.mtime} • ${f.category}</div>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-1.5 shrink-0">
+                                <button onclick="openFileOnPC('${f.path.replace(/\\/g, '\\\\')}')" class="px-2 py-1 bg-cyan-950 hover:bg-cyan-900 text-cyan-300 rounded-md font-semibold text-[10px]">Open on PC</button>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    container.innerHTML = '<div class="text-center text-slate-500 py-6">No matching files found.</div>';
+                }
+            } catch (err) {
+                container.innerHTML = '<div class="text-center text-red-400 py-6">Failed to load files.</div>';
+            }
+        }
+
+        function searchFiles() {
+            fetchFilesList();
+        }
+
+        function filterFileCategory(cat, btn) {
+            activeCategory = cat;
+            document.querySelectorAll('.file-cat-btn').forEach(b => {
+                b.className = 'file-cat-btn px-3 py-1 rounded-full bg-slate-800 text-slate-400 font-semibold hover:text-white';
+            });
+            btn.className = 'file-cat-btn px-3 py-1 rounded-full bg-cyan-600 text-white font-semibold';
+            fetchFilesList();
+        }
+
+        function openFileOnPC(filePath) {
+            apiFetch('/api/files/open', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: filePath })
+            }).then(r => r.json()).then(data => {
+                if (data.ok) alert('✅ ' + data.msg);
+                else alert('❌ ' + data.msg);
+            }).catch(() => {});
+        }
+
+        // Process Manager Modal
+        async function fetchTasksList() {
+            const container = document.getElementById('tasksListContainer');
+            container.innerHTML = '<div class="text-center text-slate-500 py-6">Loading running tasks...</div>';
+
+            try {
+                const res = await apiFetch('/api/tasks');
+                const data = await res.json();
+                if (data.ok && data.tasks && data.tasks.length > 0) {
+                    container.innerHTML = data.tasks.map(t => `
+                        <div class="p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-2">
+                            <div>
+                                <div class="font-semibold text-slate-200 text-[11px]">${t.name}</div>
+                                <div class="text-[10px] text-slate-500 font-mono">PID: ${t.pid} • Mem: ${t.mem}</div>
+                            </div>
+                            <button onclick="killTask('${t.pid}', '${t.name}')" class="px-2.5 py-1 bg-red-950 hover:bg-red-900 text-red-300 rounded-md font-semibold text-[10px]">Kill</button>
+                        </div>
+                    `).join('');
+                } else {
+                    container.innerHTML = '<div class="text-center text-slate-500 py-6">No tasks reported.</div>';
+                }
+            } catch (err) {
+                container.innerHTML = '<div class="text-center text-red-400 py-6">Failed to load tasks.</div>';
+            }
+        }
+
+        function killTask(pid, name) {
+            if (!confirm(`End process ${name} (PID: ${pid})?`)) return;
+            apiFetch('/api/tasks/kill', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pid: pid, name: name })
+            }).then(() => {
+                fetchTasksList();
+            }).catch(() => {});
+        }
+
+        function updateRefreshRate(val) {
+            refreshIntervalMs = parseInt(val);
+            const fps = Math.round(1000 / refreshIntervalMs);
+            document.getElementById('fpsVal').innerText = `${refreshIntervalMs}ms (~${fps} FPS)`;
+        }
+
+        function saveSettings() {
+            const token = document.getElementById('settingAuthToken').value.trim();
+            if (token) {
+                AUTH_TOKEN = token;
+                localStorage.setItem('deck_auth_token', token);
+            }
+            closeModal('settingsModal');
+        }
+
+        // Initialize on load
+        // Live Viewers & Heartbeat Loop
+        async function sendHeartbeat() {
+            try {
+                const hostPrefix = activeTunnelHost ? activeTunnelHost : "";
+                const res = await apiFetch('/api/heartbeat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        device: navigator.userAgent.includes('Mobile') ? 'Mobile Device' : 'Desktop Browser',
+                        screen: `${window.innerWidth}x${window.innerHeight}`
+                    })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.ok) {
+                        const count = Math.max(1, data.count || 1);
+                        const badgeText = document.getElementById('viewerCountText');
+                        if (badgeText) {
+                            badgeText.innerText = count === 1 ? '1 Live' : `${count} Live`;
+                        }
+                        if (!document.getElementById('viewersModal').classList.contains('hidden')) {
+                            renderViewers(data.viewers || []);
+                        }
+                    }
+                }
+            } catch (e) {}
+        }
+
+        async function fetchViewersList() {
+            const container = document.getElementById('viewersListContainer');
+            container.innerHTML = '<div class="text-center text-slate-500 py-6">Loading connected devices...</div>';
+            try {
+                const hostPrefix = activeTunnelHost ? activeTunnelHost : "";
+                const res = await apiFetch('/api/viewers');
+                if (res.ok) {
+                    const data = await res.json();
+                    renderViewers(data.viewers || []);
+                }
+            } catch (e) {
+                container.innerHTML = '<div class="text-center text-red-400 py-6">Failed to load devices.</div>';
+            }
+        }
+
+        function renderViewers(viewers) {
+            const container = document.getElementById('viewersListContainer');
+            if (!viewers || viewers.length === 0) {
+                container.innerHTML = `
+                    <div class="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-2">
+                        <div class="flex items-center gap-2.5">
+                            <div class="w-8 h-8 rounded-lg bg-emerald-950 text-emerald-400 flex items-center justify-center text-sm">
+                                <i class="fa-solid fa-mobile-screen"></i>
+                            </div>
+                            <div>
+                                <div class="font-semibold text-slate-200 text-[11px]">This Device (Current Session)</div>
+                                <div class="text-[10px] text-emerald-400">Active Live Stream</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+            container.innerHTML = viewers.map(v => `
+                <div class="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-2 hover:border-slate-700 transition">
+                    <div class="flex items-center gap-2.5 min-w-0">
+                        <div class="w-8 h-8 rounded-lg bg-cyan-950 text-cyan-400 flex items-center justify-center text-sm shrink-0">
+                            <i class="fa-solid ${v.device && v.device.toLowerCase().includes('mobile') ? 'fa-mobile-screen' : 'fa-laptop'}"></i>
+                        </div>
+                        <div class="min-w-0">
+                            <div class="font-semibold text-slate-200 truncate text-[11px]">${v.device || 'Web Client'}</div>
+                            <div class="text-[10px] text-slate-400 truncate">IP: ${v.ip || 'Remote'} • ${v.country || 'Online'}</div>
+                            <div class="text-[9px] text-slate-500 font-mono">Connected: ${v.connected_at || 'Just now'} • Idle: ${v.idle_seconds || 0}s</div>
+                        </div>
+                    </div>
+                    <button onclick="kickViewer('${v.id}')" class="px-2 py-1 bg-red-950 hover:bg-red-900 text-red-300 rounded-md font-semibold text-[10px] shrink-0">Kick</button>
+                </div>
+            `).join('');
+        }
+
+        function kickViewer(sid) {
+            if (!confirm('Disconnect this viewer session?')) return;
+            apiFetch('/api/viewers/kick', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sid })
+            }).then(() => fetchViewersList()).catch(() => {});
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            setInterval(sendHeartbeat, 5000);
+            sendHeartbeat();
+            startLiveFeed();
+        });
+    </script>
+</body>
+</html>
