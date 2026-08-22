@@ -782,31 +782,51 @@
             }
         }, { passive: true });
 
+        let lastTapTime = 0;
+        let lastTapX = 0;
+        let lastTapY = 0;
+
         viewport.addEventListener('touchend', (e) => {
             if (e.changedTouches.length === 1) {
                 const touch = e.changedTouches[0];
                 const duration = Date.now() - touchStartTime;
-                // Immediate Tap Detection: Under 400ms and minimal jitter (<20px) -> Trigger INSTANT CLICK!
+                // Immediate Tap Detection: Under 400ms and minimal jitter (<20px)
                 if (duration < 400 && touchMaxDist < 20) {
-                    handleScreenClick(touch.clientX, touch.clientY);
+                    const now = Date.now();
+                    const distFromLastTap = Math.hypot(touch.clientX - lastTapX, touch.clientY - lastTapY);
+                    
+                    let clickType = 'left';
+                    if (now - lastTapTime < 350 && distFromLastTap < 35) {
+                        clickType = 'double';
+                        lastTapTime = 0;
+                    } else {
+                        lastTapTime = now;
+                        lastTapX = touch.clientX;
+                        lastTapY = touch.clientY;
+                    }
+                    handleScreenClick(touch.clientX, touch.clientY, clickType);
                 }
             }
         });
 
+        viewport.addEventListener('dblclick', (e) => {
+            handleScreenClick(e.clientX, e.clientY, 'double');
+        });
+
         viewport.addEventListener('click', (e) => {
             if (interactionMode === 'mouse' || window.matchMedia('(pointer:fine)').matches) {
-                handleScreenClick(e.clientX, e.clientY);
+                handleScreenClick(e.clientX, e.clientY, 'left');
             }
         });
 
-        function handleScreenClick(clientX, clientY) {
+        function handleScreenClick(clientX, clientY, clickType = 'left') {
             const img = document.getElementById('liveFeed');
             const viewport = document.getElementById('viewportContainer');
             if (!img || !viewport) return;
 
             // Instant Haptic Feedback on phone
             if (navigator.vibrate) {
-                try { navigator.vibrate(15); } catch(e) {}
+                try { navigator.vibrate(clickType === 'double' ? [15, 30, 15] : 15); } catch(e) {}
             }
 
             const vRect = viewport.getBoundingClientRect();
@@ -858,13 +878,13 @@
             if (normX >= 0 && normX <= 1 && normY >= 0 && normY <= 1) {
                 const pcX = Math.round(normX * SERVER_SCREEN_W);
                 const pcY = Math.round(normY * SERVER_SCREEN_H);
-                console.log(`Instant Touch -> PC (${pcX}, ${pcY})`);
+                console.log(`Instant Touch (${clickType}) -> PC (${pcX}, ${pcY})`);
 
                 const hostPrefix = activeTunnelHost ? activeTunnelHost : "";
                 fetch(hostPrefix + '/api/mouse/click?auth=' + AUTH_TOKEN, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ x: pcX, y: pcY, type: 'left' }),
+                    body: JSON.stringify({ x: pcX, y: pcY, type: clickType }),
                     keepalive: true
                 }).catch(() => {});
             }
